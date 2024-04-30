@@ -67,10 +67,7 @@ class BigramLanguageModel(nn.Module):
     self.token_embedding_table = nn.Embedding(vocab_size, n_embed)
     self.position_embedding_table = nn.Embedding(block_size, n_embed)
     self.lm_head = nn.Linear(n_embed)
-
-
-  
- 
+    
   def forward(self, idx, targets=None):
     B, T = idx.shape
     tok_emb = self.token_embedding_table(idx) # (B, T, C)
@@ -97,6 +94,31 @@ class BigramLanguageModel(nn.Module):
       idx_next = torch.multinomial(probs, num_samples=1)
       idx = torch.cat((idx,idx_next), dim=1)
     return idx
+  
+  
+class Head(nn.Module):
+  # single head of attention
+  def __init__(self, head_size):
+    super().__init__()
+    self.key = nn.Linear(n_embed, head_size, bias = False)
+    self.query = nn.Linear(n_embed, head_size, bias=False)
+    self.value = nn.Linear(n_embed, head_size, bias=False)
+    self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+    
+  def forward(self, x):
+    B,T,C = x.shape      
+    k = self.key(x)      # (B, T, C)
+    q = self.query(x)    # (B, T, C)
+    # compute attention scores
+    wei = q @ k.transpose(-2, -1) * C ** -0.5 # (B, T, T)
+    wei = wei.masked_fill(self.tril[:T,:T] == 0, float('-inf')) # (B, T, T)
+    wei = F.softmax(wei, dim=-1) # (B, T, T)
+    # aggregation of values
+    v = self.value(x) # (B, T, C)
+    out = wei @ v  # (B, T, C)
+    return out
+    
+  
 
 model = BigramLanguageModel()
 m = model.to(device)
