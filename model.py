@@ -12,7 +12,7 @@ learning_rate = 1e-2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # open training data
-with open('../data/input.txt', 'r', encoding='utf-8') as f:
+with open('./data/input.txt', 'r', encoding='utf-8') as f:
 	text = f.read()
 
 # get vocab
@@ -40,3 +40,74 @@ def get_batch(split):
 	y = torch.stack([data[i+1:i+block_size+1] for i in ix])
 	return x,y
 
+@torch.no_grad()
+def estimate_loss():
+  out = {}
+  model.eval()
+  for split in ['train', 'val']:
+    losses = torch.zeros(eval_interval)
+    for k in range(eval_interval):
+      X, Y = get_batch(split)
+      logits, loss = model(X, Y)
+      losses[k] = loss.item()
+    out[split] = losses.mean()
+  model.train()
+  return out
+
+
+# bigram model
+class BigramLanguageModel(nn.Module):
+	
+	def __init__(self, vocab_size):
+		super().__init__()
+		self.token_embedding_table = nn.Embedding(vocab_size, vocab_size)
+  
+	def forward(self, idx, targets=None):
+		logits = self.token_embedding_table(idx)
+  
+		if targets is None:
+			loss = None
+		else:
+			B, T, C = logits.shape
+			logits = logits.view(B*T, C)
+			targets = targets.view(B*T)
+			loss = F.cross_entropy(logits, targets)
+   
+		return logits, loss
+
+	def generate(self, idx, max_new_tokens):
+		
+		for _ in range(max_new_tokens):
+			logits, loss = self(idx)
+			logits = logits[:, -1, :]
+			probs = F.softmax(logits, dim=-1)
+			idx_next = torch.multinomial(probs, num_samples=1)
+			idx = torch.cat((idx,idx_next), dim=1)
+		return idx
+
+model = BigramLanguageModel(vocab_size)
+m = model.to(device)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+for iter in range(iterations):
+  if iter % eval_interval == 0:
+    losses = estimate_loss()
+    print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+    
+  xb, yb = get_batch('train')
+
+  logits, loss = model(xb, yb)
+  optimizer.zero_grad(set_to_none=True)
+  loss.backward()
+  optimizer.step()
+
+
+# generate from model
+context = torch.zeros((1,1), dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))
+
+
+
+	
+ 
